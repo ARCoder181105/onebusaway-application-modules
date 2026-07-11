@@ -15,10 +15,13 @@
  */
 package org.onebusaway.perf.gtfsrt;
 
+import org.onebusaway.alerts.impl.ServiceAlertRecord;
+import org.onebusaway.alerts.service.ServiceAlertsService;
 import org.onebusaway.container.ContainerLibrary;
 import org.onebusaway.gtfs.model.AgencyAndId;
 import org.onebusaway.realtime.api.VehicleLocationListener;
 import org.onebusaway.realtime.api.VehicleLocationRecord;
+import org.onebusaway.transit_data.model.service_alerts.SituationQueryBean;
 import org.onebusaway.transit_data_federation.impl.realtime.DynamicBlockIndexServiceImpl;
 import org.onebusaway.transit_data_federation.impl.realtime.VehicleStatusServiceImpl;
 import org.onebusaway.transit_data_federation.impl.realtime.gtfs_realtime.GtfsRealtimeCancelServiceImpl;
@@ -37,8 +40,11 @@ import org.onebusaway.transit_data_federation.services.transit_graph.TransitGrap
 import org.springframework.context.ConfigurableApplicationContext;
 
 import java.io.File;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -100,8 +106,17 @@ public class PerfBundleHarness {
     _source.setFilterUnassigned(false);
 
     // Capturing listener that delegates to the real block-location write path.
-    VehicleLocationListener real = _context.getBean(VehicleStatusServiceImpl.class);
+    VehicleStatusServiceImpl real = _context.getBean(VehicleStatusServiceImpl.class);
     _source.setVehicleLocationListener(new CountingListener(real, _lastCount));
+    // Same bean also implements VehicleOccupancyListener; GtfsRealtimeSource requires
+    // both to be non-null (they're @Autowired in production Spring wiring, but this
+    // harness constructs GtfsRealtimeSource by hand).
+    _source.setVehicleOccupancyListener(real);
+    // ServiceAlertsService has no bean in this harness's minimal context
+    // (onebusaway-alerts-persistence's DB-backed impl isn't wired here); a
+    // simple in-memory implementation is enough to keep GtfsRealtimeSource's
+    // alert-handling path from NPEing on every refresh.
+    _source.setServiceAlertService(new InMemoryServiceAlertsService());
     _source.setGtfsRealtimeCancelService(_context.getBean(GtfsRealtimeCancelServiceImpl.class));
 
     _source.setTripUpdatesUrl(new java.net.URL(_tripUpdatesUrl));
@@ -142,5 +157,90 @@ public class PerfBundleHarness {
     }
     @Override public void resetVehicleLocation(AgencyAndId vehicleId) { _delegate.resetVehicleLocation(vehicleId); }
     @Override public void handleRawPosition(AgencyAndId vehicleId, double lat, double lon, long timestamp) { }
+  }
+
+  /**
+   * Minimal in-memory {@link ServiceAlertsService} so {@code GtfsRealtimeSource}'s
+   * alert-handling path has somewhere to read/write. This harness isn't measuring
+   * alert persistence, so a real DB-backed implementation (which would require
+   * pulling in onebusaway-alerts-persistence's Hibernate wiring) isn't warranted;
+   * this just needs to satisfy the read-your-writes contract the source relies on.
+   */
+  private static final class InMemoryServiceAlertsService implements ServiceAlertsService {
+    private final Map<String, ServiceAlertRecord> _byId = new ConcurrentHashMap<>();
+
+    private static String key(String agencyId, String serviceAlertId) {
+      return agencyId + "_" + serviceAlertId;
+    }
+
+    @Override public void cleanup() { }
+    @Override public void loadServiceAlerts() { }
+
+    @Override public ServiceAlertRecord createOrUpdateServiceAlert(ServiceAlertRecord record) {
+      _byId.put(key(record.getAgencyId(), record.getServiceAlertId()), record);
+      return record;
+    }
+
+    @Override public void removeServiceAlert(AgencyAndId serviceAlertId) {
+      _byId.remove(key(serviceAlertId.getAgencyId(), serviceAlertId.getId()));
+    }
+
+    @Override public ServiceAlertRecord copyServiceAlert(ServiceAlertRecord record) { return record; }
+
+    @Override public void removeServiceAlerts(List<AgencyAndId> serviceAlertIds) {
+      for (AgencyAndId id : serviceAlertIds) removeServiceAlert(id);
+    }
+
+    @Override public void removeAllServiceAlertsForFederatedAgencyId(String agencyId) {
+      _byId.values().removeIf(r -> agencyId.equals(r.getAgencyId()));
+    }
+
+    @Override public ServiceAlertRecord getServiceAlertForId(AgencyAndId serviceAlertId) {
+      return _byId.get(key(serviceAlertId.getAgencyId(), serviceAlertId.getId()));
+    }
+
+    @Override public List<ServiceAlertRecord> getAllServiceAlerts() {
+      return new ArrayList<>(_byId.values());
+    }
+
+    @Override public List<ServiceAlertRecord> getServiceAlertsForFederatedAgencyId(String agencyId) {
+      List<ServiceAlertRecord> result = new ArrayList<>();
+      for (ServiceAlertRecord r : _byId.values())
+        if (agencyId.equals(r.getAgencyId())) result.add(r);
+      return result;
+    }
+
+    @Override public List<ServiceAlertRecord> getServiceAlertsForAgencyId(long time, String agencyId) {
+      return Collections.emptyList();
+    }
+
+    @Override public List<ServiceAlertRecord> getServiceAlertsForStopId(long time, AgencyAndId stopId) {
+      return Collections.emptyList();
+    }
+
+    @Override public List<ServiceAlertRecord> getServiceAlertsForRouteId(long time, AgencyAndId routeId) {
+      return Collections.emptyList();
+    }
+
+    @Override public List<ServiceAlertRecord> getServiceAlertsForRouteAndStopId(long time, AgencyAndId routeId, AgencyAndId stopId) {
+      return Collections.emptyList();
+    }
+
+    @Override public List<ServiceAlertRecord> getServiceAlertsForTripAndStopId(long time, AgencyAndId tripId, AgencyAndId stopId) {
+      return Collections.emptyList();
+    }
+
+    @Override public List<ServiceAlertRecord> getServiceAlertsForRouteAndDirection(long time, AgencyAndId routeId, AgencyAndId stopId, String directionId) {
+      return Collections.emptyList();
+    }
+
+    @Override public List<ServiceAlertRecord> getServiceAlerts(SituationQueryBean query) {
+      return Collections.emptyList();
+    }
+
+    @Override public List<ServiceAlertRecord> createOrUpdateServiceAlerts(String agencyId, List<ServiceAlertRecord> records) {
+      for (ServiceAlertRecord r : records) createOrUpdateServiceAlert(r);
+      return records;
+    }
   }
 }
