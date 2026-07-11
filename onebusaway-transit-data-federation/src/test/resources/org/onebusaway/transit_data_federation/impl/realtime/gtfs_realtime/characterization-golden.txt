@@ -1,0 +1,6 @@
+blockId=1_blockA
+tripId=null
+serviceDate=0
+scheduleDeviation=120.0
+tpr timepointId=1_stopB tripId=1_tripA seq=-1 arr=-1 dep=27780000
+tpr timepointId=1_stopA tripId=1_tripA seq=0 arr=27120000 dep=27120000
