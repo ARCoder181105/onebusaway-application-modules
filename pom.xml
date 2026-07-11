@@ -123,6 +123,7 @@
         <module>onebusaway-watchdog-webapp</module>
         <module>onebusaway-alerts-api</module>
         <module>onebusaway-gtfsrt-integration-tests</module>
+        <module>onebusaway-gtfsrt-perf</module>
         <module>onebusaway-api-key-cli</module>
 
         <!-- Disabled Modules: These are deprecated and should be removed. -->
