@@ -136,6 +136,7 @@ public class PerfBundleHarness {
 
   public int lastRecordCount() { return _lastCount.get(); }
   public GtfsRealtimeSource getSource() { return _source; }
+  public org.springframework.context.ApplicationContext getContext() { return _context; }
 
   public void close() {
     if (_context != null) { _context.stop(); _context.close(); }
