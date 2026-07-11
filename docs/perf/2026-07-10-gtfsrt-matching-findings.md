@@ -17,8 +17,11 @@ and the bundle's stop-count distribution.
 **Verdict:** the "mostly legitimate work" claim does **not** hold for the largest
 cost we can see. The single dominant hotspot —
 `BlockConfigurationEntryImpl$BlockStopTimeList.get()` — accounts for **19.78% of
-CPU self-time** and **59.20% of all allocated bytes** (48.8 GB over a 100-refresh
-run), and it is pure, avoidable waste: a materialize-on-access `List` view that
+CPU self-time** and **69.02% of all allocated bytes** (48.8 GB over a 100-refresh
+run; `BlockStopTimeEntryImpl` is constructed *only* inside `.get()`, so its entire
+allocation share is attributable to this call — of which the 59.20% / 41.8 GB
+detailed in §4 is the block-location write-path slice), and it is pure, avoidable
+waste: a materialize-on-access `List` view that
 constructs a brand-new `BlockStopTimeEntryImpl` on **every** `.get()` call
 instead of returning a cached reference. This is algorithmic/allocation waste,
 not inherent load, and it is fixable behind an existing regression test.
@@ -390,7 +393,7 @@ re-invocation on top of the quadratic term.
 
 **Not accurate for the dominant cost.** The evidence:
 
-- **~20% of CPU self-time** and **~59% of all allocated bytes** come from a single
+- **~20% of CPU self-time** and **~69% of all allocated bytes** come from a single
   avoidable pattern — a materialize-on-access list view (`BlockStopTimeList`) that
   reconstructs a `BlockStopTimeEntryImpl` on every `.get()`, hammered by repeated
   stop-time iteration on both the block-location write path and the trip-update
